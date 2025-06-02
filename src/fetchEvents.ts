@@ -50,7 +50,8 @@ export async function fetchResultEventsChunked(
   provider: ethers.JsonRpcProvider,
   fromBlock: number,
   toBlock: number,
-  chunkSize = 2000
+  chunkSize = 2000,
+  maxConcurrent = 5
 ) {
   const contract = new ethers.Contract(
     config.CONTRACT_ADDRESS,
@@ -59,13 +60,26 @@ export async function fetchResultEventsChunked(
   );
   let allEvents: EventRecord[] = [];
 
+  // 建立所有需要處理的區塊範圍
+  const chunks: { from: number; to: number }[] = [];
   for (let i = fromBlock; i <= toBlock; i += chunkSize) {
     const from = i;
     const to = Math.min(i + chunkSize - 1, toBlock);
-    console.log(`🔎 撈取區塊 ${from} ~ ${to}`);
+    chunks.push({ from, to });
+  }
 
-    const events = await queryWithRetry(contract, provider, from, to);
-    allEvents = allEvents.concat(events);
+  // 平行處理所有區塊範圍
+  for (let i = 0; i < chunks.length; i += maxConcurrent) {
+    const currentChunks = chunks.slice(i, i + maxConcurrent);
+    console.log(`🔎 平行處理 ${currentChunks.length} 個區塊範圍`);
+
+    const promises = currentChunks.map(async ({ from, to }) => {
+      console.log(`  - 處理區塊 ${from} ~ ${to}`);
+      return await queryWithRetry(contract, provider, from, to);
+    });
+
+    const results = await Promise.all(promises);
+    allEvents = allEvents.concat(...results);
   }
 
   // ✅ 儲存所有事件（包含 success=false 的）供檢查
